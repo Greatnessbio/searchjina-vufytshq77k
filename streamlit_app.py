@@ -43,29 +43,26 @@ def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
                 st.error(f"Jina AI search request failed after {max_retries} attempts: {e}")
     return None
 
-def summarize_jina_response(jina_response, openrouter_api_key):
+def process_with_openrouter(prompt, context, openrouter_api_key):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {openrouter_api_key}",
         "Content-Type": "application/json"
     }
-    prompt = f"""Summarize and extract the most important information from this Jina AI search response:
+    
+    full_prompt = f"""Context from previous interactions:
+{context}
 
-{json.dumps(jina_response, indent=2)}
+Current task:
+{prompt}
 
-Focus on:
-1. The main answer or key information
-2. Important facts or data points
-3. Relevant image descriptions
-4. Useful link summaries
-
-Provide a concise summary that captures the essence of the search results."""
+Provide a response based on the context and the current task."""
 
     payload = {
         "model": "anthropic/claude-3-sonnet-20240229",
         "messages": [
-            {"role": "system", "content": "You are an AI assistant tasked with summarizing and extracting key information from Jina AI search results."},
-            {"role": "user", "content": prompt}
+            {"role": "system", "content": "You are an AI assistant tasked with processing and analyzing information from Jina AI search results and previous interactions."},
+            {"role": "user", "content": full_prompt}
         ]
     }
 
@@ -90,29 +87,47 @@ def login_page():
             st.error("Invalid username or password")
 
 def main_app():
-    st.title("Jina AI Search with OpenRouter Summarization")
+    st.title("Jina AI Search with OpenRouter Sequential Prompts")
 
     api_keys = load_api_keys()
     if not api_keys:
         return
 
+    if 'jina_results' not in st.session_state:
+        st.session_state.jina_results = None
+    if 'context' not in st.session_state:
+        st.session_state.context = ""
+
     query = st.text_input("Enter your search query:")
 
     if st.button("Search") and query:
-        with st.spinner("Searching and summarizing..."):
+        with st.spinner("Searching..."):
             jina_results = get_jina_search_results(query, api_keys["jina"])
             if jina_results:
+                st.session_state.jina_results = jina_results
                 st.subheader("Raw Jina AI Search Results")
-                st.json(jina_results)  # Display the full JSON response
-
-                summary = summarize_jina_response(jina_results, api_keys["openrouter"])
-                if summary:
-                    st.subheader("Summary of Search Results")
-                    st.write(summary)
-                else:
-                    st.error("Failed to generate summary.")
+                st.json(jina_results)
             else:
                 st.error("No results found or an error occurred.")
+
+    if st.session_state.jina_results:
+        prompt = st.text_area("Enter your prompt for analysis:")
+        if st.button("Process Prompt"):
+            with st.spinner("Processing..."):
+                result = process_with_openrouter(prompt, st.session_state.context, api_keys["openrouter"])
+                if result:
+                    st.subheader("Analysis Result")
+                    st.write(result)
+                    st.session_state.context += f"\nPrompt: {prompt}\nResult: {result}\n"
+                else:
+                    st.error("Failed to process the prompt.")
+
+        if st.button("Clear Context"):
+            st.session_state.context = ""
+            st.success("Context cleared.")
+
+        st.subheader("Current Context")
+        st.text_area("Context", st.session_state.context, height=300, disabled=True)
 
 def display():
     if 'logged_in' not in st.session_state:
