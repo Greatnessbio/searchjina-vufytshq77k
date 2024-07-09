@@ -112,7 +112,7 @@ def get_company_posts(company_url, rapidapi_key):
         st.error("Failed to fetch company posts. Please try again later.")
     return None
 
-def create_company_summary(company_info):
+def create_company_summary(company_info, jina_results, exa_results):
     if 'data' not in company_info:
         return "No company information available."
 
@@ -138,11 +138,40 @@ def create_company_summary(company_info):
     summary += f"**Specialties:** {', '.join(data.get('specialities', ['N/A']))}\n\n"
     summary += f"**Description:** {data.get('description', 'N/A')}\n\n"
     
-    summary += "## Competitors\n"
-    for competitor in data.get('similarOrganizations', [])[:5]:
-        summary += f"- **{competitor.get('name', 'N/A')}** ({competitor.get('industry', 'N/A')})\n"
+    summary += "## Additional Insights from Jina and Exa Search\n"
+    if jina_results:
+        summary += "### Jina Search Insights\n"
+        for result in jina_results[:3]:
+            summary += f"- {result.get('title', 'N/A')}: {result.get('snippet', 'N/A')[:200]}...\n"
+    
+    if exa_results:
+        summary += "\n### Exa Search Insights\n"
+        for result in exa_results[:3]:
+            summary += f"- {result.title}: {' '.join(result.highlights[:2])}...\n"
     
     return summary
+
+def analyze_competitors(company_info, jina_results, exa_results):
+    competitors = company_info.get('data', {}).get('similarOrganizations', [])
+    competitor_names = [comp.get('name') for comp in competitors if comp.get('name')]
+    
+    competitor_analysis = "## Competitor Analysis\n\n"
+    for competitor in competitors[:5]:
+        competitor_analysis += f"### {competitor.get('name', 'N/A')}\n"
+        competitor_analysis += f"Industry: {competitor.get('industry', 'N/A')}\n"
+        competitor_analysis += f"LinkedIn URL: {competitor.get('linkedinUrl', 'N/A')}\n\n"
+    
+    # Use Jina and Exa results to enrich competitor analysis
+    if jina_results or exa_results:
+        competitor_analysis += "### Additional Competitor Insights\n"
+        all_results = (jina_results or []) + (exa_results or [])
+        for result in all_results:
+            content = result.get('snippet', '') if isinstance(result, dict) else ' '.join(result.highlights)
+            for competitor in competitor_names:
+                if competitor.lower() in content.lower():
+                    competitor_analysis += f"- Mention of {competitor}: {content[:200]}...\n\n"
+    
+    return competitor_analysis
 
 def analyze_posts(posts):
     post_texts = [post.get('postText', '') for post in posts if post.get('postText')]
@@ -160,8 +189,8 @@ def analyze_posts(posts):
     
     return analyze_text(combined_text, prompt)
 
-def generate_post_prompt(company_info, post_analysis):
-    prompt = f"""Based on the following company information and post analysis, create a detailed prompt that can be used to generate LinkedIn posts in the style of this company:
+def generate_post_prompt(company_info, post_analysis, competitor_analysis):
+    prompt = f"""Based on the following company information, post analysis, and competitor analysis, create a detailed prompt that can be used to generate LinkedIn posts in the style of this company:
 
     Company Information:
     {json.dumps(company_info.get('data', {}), indent=2)}
@@ -169,13 +198,17 @@ def generate_post_prompt(company_info, post_analysis):
     Post Analysis:
     {post_analysis}
 
+    Competitor Analysis:
+    {competitor_analysis}
+
     Your task is to create a prompt that captures:
     1. The company's industry and focus
     2. The typical content style and tone used in their posts
     3. Common themes and topics they discuss
     4. Their use of hashtags and mentions
     5. The typical length and structure of their posts
-    6. Any other unique characteristics of their LinkedIn communication
+    6. How they differentiate themselves from competitors
+    7. Any other unique characteristics of their LinkedIn communication
 
     Provide the prompt in a format that can be directly used to generate new posts."""
     
@@ -213,64 +246,51 @@ def main_app():
     if not api_keys:
         return
 
-    company_url = st.text_input("Enter LinkedIn Company URL:")
+    company_url = st.text_input("Enter the company's URL:")
 
     if company_url:
-        if 'company_info' not in st.session_state:
-            with st.spinner("Fetching company information..."):
-                company_info = get_company_info(company_url, api_keys["rapidapi"])
-                if company_info:
-                    st.session_state.company_info = company_info
-                    st.success("Company information fetched successfully!")
-                else:
-                    st.error("Failed to fetch company information. Please try again.")
-                    return
+        with st.spinner("Analyzing company..."):
+            # Jina Search
+            jina_results = get_jina_search_results(company_url, api_keys["jina"])
+            st.session_state.jina_results = jina_results
 
-        if 'company_summary' not in st.session_state:
-            st.session_state.company_summary = create_company_summary(st.session_state.company_info)
-
-        st.markdown(st.session_state.company_summary)
-
-        if 'jina_results' not in st.session_state:
-            with st.spinner("Fetching Jina search results..."):
-                jina_results = get_jina_search_results(company_url, api_keys["jina"])
-                if jina_results:
-                    st.session_state.jina_results = jina_results
-                    st.success("Jina search results fetched successfully!")
-                else:
-                    st.warning("Failed to fetch Jina search results. Continuing with limited information.")
-
-        if 'exa_results' not in st.session_state and exa_available:
-            with st.spinner("Fetching Exa search results..."):
+            # Exa Search
+            if exa_available and api_keys["exa"]:
                 exa_results = get_exa_search_results(company_url, api_keys["exa"])
-                if exa_results:
-                    st.session_state.exa_results = exa_results
-                    st.success("Exa search results fetched successfully!")
-                else:
-                    st.warning("Failed to fetch Exa search results. Continuing with limited information.")
+                st.session_state.exa_results = exa_results
+            else:
+                st.session_state.exa_results = None
+                st.warning("Exa search is not available. Analysis will be based only on Jina results.")
 
-        if st.button("Analyze Company Posts"):
-            if 'company_posts' not in st.session_state:
-                with st.spinner("Fetching company posts..."):
-                    company_posts = get_company_posts(company_url, api_keys["rapidapi"])
-                    if company_posts:
-                        st.session_state.company_posts = company_posts
-                        st.success("Company posts fetched successfully!")
-                    else:
-                        st.error("Failed to fetch company posts. Please try again.")
-                        return
+            # Get company info from RapidAPI
+            company_info = get_company_info(company_url, api_keys["rapidapi"])
+            if not company_info:
+                st.error("Failed to fetch company information. Please try again.")
+                return
+            st.session_state.company_info = company_info
 
-            with st.spinner("Analyzing company posts..."):
-                post_analysis = analyze_posts(st.session_state.company_posts.get('response', []))
+            # Create company summary
+            company_summary = create_company_summary(company_info, jina_results, st.session_state.exa_results)
+            st.markdown(company_summary)
+
+            # Analyze competitors
+            competitor_analysis = analyze_competitors(company_info, jina_results, st.session_state.exa_results)
+            st.markdown(competitor_analysis)
+
+            # Get and analyze company posts
+            company_posts = get_company_posts(company_url, api_keys["rapidapi"])
+            if company_posts:
+                post_analysis = analyze_posts(company_posts.get('response', []))
                 st.subheader("Post Analysis")
                 st.write(post_analysis)
                 st.session_state.post_analysis = post_analysis
 
-        if 'post_analysis' in st.session_state and st.button("Generate AI Prompt for Posts"):
-            with st.spinner("Generating AI prompt..."):
-                ai_prompt = generate_post_prompt(st.session_state.company_info, st.session_state.post_analysis)
+                # Generate AI prompt for posts
+                ai_prompt = generate_post_prompt(company_info, post_analysis, competitor_analysis)
                 st.subheader("AI Prompt for Generating Posts")
                 st.text_area("Generated Prompt", ai_prompt, height=300)
+            else:
+                st.warning("Failed to fetch company posts. Post analysis is not available.")
 
 def login_page():
     st.title("Login")
@@ -291,14 +311,14 @@ def display():
     if not st.session_state.logged_in:
         login_page()
     else:
-        st.title("LinkedIn Company Analysis")
+        st.title("Comprehensive Company Analysis")
         if st.button("Logout"):
             st.session_state.logged_in = False
             st.rerun()
         else:
             main_app()
 
-    st.caption("Note: This app uses RapidAPI's LinkedIn Data Scraper, Jina AI, Exa, and OpenRouter for AI model access. Make sure you have valid API keys for all services.")
+    st.caption("Note: This app uses Jina AI, Exa (if available), RapidAPI's LinkedIn Data Scraper, and OpenRouter for AI model access. Ensure you have valid API keys for all services.")
 
 if __name__ == "__main__":
     display()
