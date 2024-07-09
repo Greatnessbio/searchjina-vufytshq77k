@@ -147,7 +147,8 @@ def analyze_linkedin_presence(context, openrouter_api_key):
     3. Main themes and topics of their content
     4. Tone and style of their posts
     5. Any notable recent updates or announcements
-    6. Overall effectiveness of their LinkedIn strategy"""
+    6. Overall effectiveness of their LinkedIn strategy
+    Use both the LinkedIn company data and the LinkedIn posts data for this analysis."""
     return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def analyze_post_structure(context, openrouter_api_key):
@@ -157,7 +158,9 @@ def analyze_post_structure(context, openrouter_api_key):
     3. Types of media used (text, images, videos, etc.)
     4. Call-to-actions and engagement prompts
     5. Frequency of sharing external links or company content
-    Provide recommendations for creating AI-generated posts that match their style."""
+    6. Engagement levels (likes, comments, shares) on different types of posts
+    Provide recommendations for creating AI-generated posts that match their style.
+    Base your analysis on the LinkedIn posts data provided in the context."""
     return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def generate_executive_summary(analyses, openrouter_api_key):
