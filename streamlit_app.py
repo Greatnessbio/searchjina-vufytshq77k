@@ -22,6 +22,7 @@ def login(username, password):
         return True
     return False
 
+@st.cache_data(ttl=3600)
 def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
     url = f"https://s.jina.ai/{requests.utils.quote(query)}"
     headers = {
@@ -43,7 +44,7 @@ def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
                 st.error(f"Jina AI search request failed after {max_retries} attempts: {e}")
     return None
 
-def process_with_openrouter(prompt, context, openrouter_api_key):
+def process_with_openrouter(prompt, context, jina_results, openrouter_api_key):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {openrouter_api_key}",
@@ -53,10 +54,14 @@ def process_with_openrouter(prompt, context, openrouter_api_key):
     full_prompt = f"""Context from previous interactions:
 {context}
 
+Jina AI search results:
+{json.dumps(jina_results, indent=2)}
+
 Current task:
 {prompt}
 
-Provide a response based on the context and the current task."""
+Provide a response based on the context, Jina AI search results, and the current task. 
+Your response should be a concise but detailed summary of the relevant information."""
 
     payload = {
         "model": "anthropic/claude-3-sonnet-20240229",
@@ -97,6 +102,8 @@ def main_app():
         st.session_state.jina_results = None
     if 'context' not in st.session_state:
         st.session_state.context = ""
+    if 'summaries' not in st.session_state:
+        st.session_state.summaries = []
 
     query = st.text_input("Enter your search query:")
 
@@ -105,8 +112,7 @@ def main_app():
             jina_results = get_jina_search_results(query, api_keys["jina"])
             if jina_results:
                 st.session_state.jina_results = jina_results
-                st.subheader("Raw Jina AI Search Results")
-                st.json(jina_results)
+                st.success("Search completed. You can now process prompts.")
             else:
                 st.error("No results found or an error occurred.")
 
@@ -114,17 +120,21 @@ def main_app():
         prompt = st.text_area("Enter your prompt for analysis:")
         if st.button("Process Prompt"):
             with st.spinner("Processing..."):
-                result = process_with_openrouter(prompt, st.session_state.context, api_keys["openrouter"])
+                result = process_with_openrouter(prompt, st.session_state.context, st.session_state.jina_results, api_keys["openrouter"])
                 if result:
-                    st.subheader("Analysis Result")
-                    st.write(result)
+                    st.session_state.summaries.append(result)
                     st.session_state.context += f"\nPrompt: {prompt}\nResult: {result}\n"
                 else:
                     st.error("Failed to process the prompt.")
 
-        if st.button("Clear Context"):
+        if st.button("Clear Context and Summaries"):
             st.session_state.context = ""
-            st.success("Context cleared.")
+            st.session_state.summaries = []
+            st.success("Context and summaries cleared.")
+
+        st.subheader("Summaries")
+        for i, summary in enumerate(st.session_state.summaries):
+            st.text_area(f"Summary {i+1}", summary, height=150)
 
         st.subheader("Current Context")
         st.text_area("Context", st.session_state.context, height=300, disabled=True)
