@@ -21,7 +21,7 @@ def load_api_keys():
             "rapidapi": st.secrets["rapidapi_key"]
         }
     except KeyError as e:
-        st.error(f"{e} API key not found in secrets.toml. Please add it.")
+        st.error(f"{str(e)} API key not found in secrets.toml. Please add it.")
         return None
 
 def load_users():
@@ -102,7 +102,7 @@ Provide a response based on the search results and the given task."""
         st.error(f"OpenRouter API request failed: {e}")
     return None
 
-def generate_report(company_info, jina_results, exa_results):
+def generate_report(company_info, jina_results, exa_results, openrouter_api_key):
     report_prompt = """
     Create a comprehensive report on the company based on the provided information. 
     The report should include the following sections:
@@ -128,7 +128,7 @@ def generate_report(company_info, jina_results, exa_results):
     {json.dumps([result.__dict__ for result in exa_results], indent=2) if exa_results else "Not available"}
     """
 
-    return process_with_openrouter(report_prompt, combined_info, api_keys["openrouter"])
+    return process_with_openrouter(report_prompt, combined_info, openrouter_api_key)
 
 def get_download_link(content, filename, text):
     b64 = base64.b64encode(content.encode()).decode()
@@ -177,7 +177,7 @@ def main_app():
             st.session_state.company_info = company_info
 
             # Generate final report
-            final_report = generate_report(company_info, jina_results, st.session_state.exa_results)
+            final_report = generate_report(company_info, jina_results, st.session_state.exa_results, api_keys["openrouter"])
             st.session_state.final_report = final_report
 
             st.success("Analysis completed!")
