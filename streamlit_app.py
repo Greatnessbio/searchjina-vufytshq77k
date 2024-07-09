@@ -166,6 +166,35 @@ def analyze_linkedin_presence(context, openrouter_api_key):
     7. Overall effectiveness of their LinkedIn strategy
     """
     return process_with_openrouter(prompt, context, openrouter_api_key)
+def analyze_linkedin_profile(context, openrouter_api_key):
+    prompt = """
+    Analyze the company's LinkedIn profile based on the provided data:
+    1. Follower count and any available growth trends
+    2. Company description and key information
+    3. Stated specialties and focus areas
+    4. Employee count and any insights on company size/growth
+    5. Listed locations and headquarters
+    6. Any notable achievements or milestones mentioned
+    
+    Provide a summary of the company's LinkedIn profile presence and any insights on how they're presenting themselves on the platform.
+    """
+    return process_with_openrouter(prompt, context, openrouter_api_key)
+
+def analyze_linkedin_posts(context, openrouter_api_key):
+    prompt = """
+    Analyze the company's LinkedIn posts based on the provided data:
+    1. Posting frequency and consistency
+    2. Types of content shared (e.g., company news, industry insights, product information)
+    3. Use of media (images, videos, links) in posts
+    4. Engagement metrics (likes, comments, shares) and trends
+    5. Use of hashtags and mentions
+    6. Tone and style of writing in posts
+    7. Any recurring themes or campaigns
+    8. Notable recent announcements or updates
+    
+    Provide a summary of the company's content strategy on LinkedIn, including strengths and areas for improvement.
+    """
+    return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def generate_executive_summary(analyses, openrouter_api_key):
     context = analyses
@@ -222,18 +251,21 @@ def main_app():
             # Perform analyses
             company_info = analyze_company_info(context, api_keys["openrouter"])
             competitor_analysis = analyze_competitors(context, api_keys["openrouter"])
-            linkedin_analysis = analyze_linkedin_presence(context, api_keys["openrouter"])
+            linkedin_profile_analysis = analyze_linkedin_profile(context, api_keys["openrouter"])
+            linkedin_posts_analysis = analyze_linkedin_posts(context, api_keys["openrouter"])
 
             # Store analyses in session state
             st.session_state.company_info = company_info
             st.session_state.competitor_analysis = competitor_analysis
-            st.session_state.linkedin_analysis = linkedin_analysis
+            st.session_state.linkedin_profile_analysis = linkedin_profile_analysis
+            st.session_state.linkedin_posts_analysis = linkedin_posts_analysis
 
             # Generate executive summary
             analyses = {
                 "company_info": company_info,
                 "competitor_analysis": competitor_analysis,
-                "linkedin_analysis": linkedin_analysis
+                "linkedin_profile_analysis": linkedin_profile_analysis,
+                "linkedin_posts_analysis": linkedin_posts_analysis
             }
             executive_summary = generate_executive_summary(analyses, api_keys["openrouter"])
             st.session_state.executive_summary = executive_summary
@@ -253,9 +285,13 @@ def main_app():
 
 {competitor_analysis}
 
-## LinkedIn Presence Analysis
+## LinkedIn Profile Analysis
 
-{linkedin_analysis}
+{linkedin_profile_analysis}
+
+## LinkedIn Posts Analysis
+
+{linkedin_posts_analysis}
 """
             st.session_state.full_report = full_report
 
