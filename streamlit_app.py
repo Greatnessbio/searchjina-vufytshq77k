@@ -92,7 +92,7 @@ def get_linkedin_company_posts(company_url, rapidapi_key):
     url = "https://linkedin-data-scraper.p.rapidapi.com/company_updates"
     payload = {
         "company_url": company_url,
-        "posts": 20,
+        "posts": 30,
         "comments": 10,
         "reposts": 10
     }
@@ -106,7 +106,7 @@ def get_linkedin_company_posts(company_url, rapidapi_key):
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
-        LOGGER.error(f"LinkedIn company posts request failed: {e}")
+        st.error(f"LinkedIn company posts request failed: {e}")
     return None
 
 def process_with_openrouter(prompt, context, openrouter_api_key):
@@ -173,7 +173,7 @@ def generate_executive_summary(analyses, openrouter_api_key):
     return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def main_app():
-    st.title("Advanced Company Analyst")
+    st.title("Advanced Company Analyst with Jina, Exa, and LinkedIn Data")
 
     api_keys = load_api_keys()
     if not api_keys:
@@ -184,97 +184,82 @@ def main_app():
 
     if st.button("Analyze Company") and company_url and linkedin_url:
         with st.spinner("Analyzing..."):
-            # Fetch data
+            # Jina Search
             jina_results = get_jina_search_results(company_url, api_keys["jina"])
-            exa_results = get_exa_search_results(company_url, api_keys["exa"]) if exa_available else None
-            linkedin_data = get_linkedin_company_data(linkedin_url, api_keys["rapidapi"])
-            linkedin_posts = get_linkedin_company_posts(linkedin_url, api_keys["rapidapi"])
-
-            # Store data in session state
             st.session_state.jina_results = jina_results
-            st.session_state.exa_results = exa_results
+
+            # Exa Search
+            if exa_available and api_keys["exa"]:
+                exa_results = get_exa_search_results(company_url, api_keys["exa"])
+                st.session_state.exa_results = exa_results
+            else:
+                st.session_state.exa_results = None
+                st.warning("Exa search is not available. Analysis will be based only on Jina results.")
+
+            # LinkedIn Data
+            linkedin_data = get_linkedin_company_data(linkedin_url, api_keys["rapidapi"])
             st.session_state.linkedin_data = linkedin_data
+
+            # LinkedIn Posts
+            linkedin_posts = get_linkedin_company_posts(linkedin_url, api_keys["rapidapi"])
             st.session_state.linkedin_posts = linkedin_posts
 
-            # Prepare context for analysis
-            context = {
-                "jina_results": jina_results,
-                "exa_results": [result.__dict__ for result in exa_results] if exa_results else None,
+            # Process all results
+            combined_results = {
+                "jina": jina_results,
+                "exa": [result.__dict__ for result in st.session_state.exa_results] if st.session_state.exa_results else None,
                 "linkedin_data": linkedin_data,
                 "linkedin_posts": linkedin_posts
             }
+            
+            company_info_prompt = "Extract key information about the company, including its name, description, products/services, and any other relevant details."
+            company_info = process_with_openrouter(company_info_prompt, combined_results, api_keys["openrouter"])
+            st.session_state.company_info = company_info
 
-            # Perform analyses
-            analyses = {
-                "company_info": analyze_company_info(context, api_keys["openrouter"]),
-                "market_position": analyze_market_position(context, api_keys["openrouter"]),
-                "linkedin_presence": analyze_linkedin_presence(context, api_keys["openrouter"]),
-                "post_structure": analyze_post_structure(context, api_keys["openrouter"])
-            }
+            linkedin_analysis_prompt = "Analyze the company's LinkedIn presence based on their profile data and recent posts. Include insights on posting frequency, engagement, and content themes."
+            linkedin_analysis = process_with_openrouter(linkedin_analysis_prompt, combined_results, api_keys["openrouter"])
+            st.session_state.linkedin_analysis = linkedin_analysis
 
-            # Generate executive summary
-            executive_summary = generate_executive_summary(analyses, api_keys["openrouter"])
-
-            # Store analyses and summary in session state
-            st.session_state.analyses = analyses
-            st.session_state.executive_summary = executive_summary
+            # Generate final report
+            final_report = generate_report(company_info, jina_results, st.session_state.exa_results, linkedin_data, linkedin_posts, api_keys["openrouter"])
+            st.session_state.final_report = final_report
 
             st.success("Analysis completed!")
 
-    if 'analyses' in st.session_state and 'executive_summary' in st.session_state:
-        # Compile all information into a single report
-        full_report = f"""# Company Analysis Report
-
-## Executive Summary
-
-{st.session_state.executive_summary}
-
-## Detailed Analyses
-
-### Company Information
-
-{st.session_state.analyses['company_info']}
-
-### Market Position
-
-{st.session_state.analyses['market_position']}
-
-### LinkedIn Presence
-
-{st.session_state.analyses['linkedin_presence']}
-
-### Post Structure Analysis
-
-{st.session_state.analyses['post_structure']}
-"""
-
-        st.markdown(full_report)
-
-        # Provide download link for the full report
-        st.download_button(
-            label="Download Full Report",
-            data=full_report,
-            file_name="company_analysis_report.md",
-            mime="text/markdown"
-        )
-
-        # Display raw data in expanders
-        if st.session_state.jina_results:
-            with st.expander("Raw Jina Search Results"):
+    if st.session_state.get('jina_results') or st.session_state.get('exa_results') or st.session_state.get('linkedin_data'):
+        st.subheader("Analysis Results")
+        
+        if st.session_state.get('jina_results'):
+            with st.expander("Jina Search Results"):
                 st.json(st.session_state.jina_results)
         
-        if st.session_state.exa_results:
-            with st.expander("Raw Exa Search Results"):
+        if st.session_state.get('exa_results'):
+            with st.expander("Exa Search Results"):
                 st.json([result.__dict__ for result in st.session_state.exa_results])
 
-        if st.session_state.linkedin_data:
-            with st.expander("Raw LinkedIn Company Data"):
+        if st.session_state.get('linkedin_data'):
+            with st.expander("LinkedIn Company Data"):
                 st.json(st.session_state.linkedin_data)
 
-        if st.session_state.linkedin_posts:
-            with st.expander("Raw LinkedIn Company Posts"):
+        if st.session_state.get('linkedin_posts'):
+            with st.expander("LinkedIn Company Posts"):
                 st.json(st.session_state.linkedin_posts)
 
+        if st.session_state.get('company_info'):
+            st.subheader("Company Information")
+            st.write(st.session_state.company_info)
+
+        if st.session_state.get('linkedin_analysis'):
+            st.subheader("LinkedIn Presence Analysis")
+            st.write(st.session_state.linkedin_analysis)
+
+        if st.session_state.get('final_report'):
+            st.subheader("Final Report")
+            st.write(st.session_state.final_report)
+            
+            report_filename = "company_analysis_report.txt"
+            download_link = get_download_link(st.session_state.final_report, report_filename, "Download Report")
+            st.markdown(download_link, unsafe_allow_html=True)
 def login_page():
     st.title("Login")
     username = st.text_input("Username")
