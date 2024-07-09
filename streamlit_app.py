@@ -2,12 +2,18 @@ import streamlit as st
 import requests
 import json
 import time
+import os
+from exa_py import Exa
+import openai
+import base64
 
 def load_api_keys():
     try:
         return {
             "jina": st.secrets["secrets"]["jina_api_key"],
-            "openrouter": st.secrets["secrets"]["openrouter_api_key"]
+            "openrouter": st.secrets["secrets"]["openrouter_api_key"],
+            "exa": st.secrets["secrets"]["exa_api_key"],
+            "openai": st.secrets["secrets"]["openai_api_key"]
         }
     except KeyError as e:
         st.error(f"{e} API key not found in secrets.toml. Please add it.")
@@ -44,24 +50,38 @@ def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
                 st.error(f"Jina AI search request failed after {max_retries} attempts: {e}")
     return None
 
-def process_with_openrouter(prompt, jina_results, openrouter_api_key):
+@st.cache_data(ttl=3600)
+def get_exa_search_results(url, exa_api_key):
+    exa = Exa(api_key=exa_api_key)
+    try:
+        search_response = exa.find_similar_and_contents(
+            url,
+            highlights={"num_sentences": 2},
+            num_results=10
+        )
+        return search_response.results
+    except Exception as e:
+        st.error(f"Exa search request failed: {e}")
+        return None
+
+def process_with_openrouter(prompt, search_results, openrouter_api_key):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {openrouter_api_key}",
         "Content-Type": "application/json"
     }
     
-    full_prompt = f"""Jina AI search results:
-{json.dumps(jina_results, indent=2)}
+    full_prompt = f"""Search results:
+{json.dumps(search_results, indent=2)}
 
 Task: {prompt}
 
-Provide a response based on the Jina AI search results and the given task."""
+Provide a response based on the search results and the given task."""
 
     payload = {
         "model": "anthropic/claude-3-sonnet-20240229",
         "messages": [
-            {"role": "system", "content": "You are an AI assistant tasked with processing and analyzing information from Jina AI search results."},
+            {"role": "system", "content": "You are an AI assistant tasked with processing and analyzing information from search results."},
             {"role": "user", "content": full_prompt}
         ]
     }
@@ -74,6 +94,123 @@ Provide a response based on the Jina AI search results and the given task."""
         st.error(f"OpenRouter API request failed: {e}")
     return None
 
+def process_with_openai(prompt, content, openai_api_key):
+    openai.api_key = openai_api_key
+    try:
+        completion = openai.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant analyzing company information."},
+                {"role": "user", "content": f"{prompt}\n\nContent:\n{content}"}
+            ]
+        )
+        return completion.choices[0].message.content
+    except Exception as e:
+        st.error(f"OpenAI API request failed: {e}")
+    return None
+
+def generate_report(company_info, jina_results, exa_results, openai_api_key):
+    report_prompt = """
+    Create a comprehensive report on the company based on the provided information. 
+    The report should include the following sections:
+    1. Executive Summary
+    2. Company Overview
+    3. Products and Services
+    4. Market Analysis
+    5. Competitive Landscape
+    6. SWOT Analysis
+    7. Financial Overview (if available)
+    8. Future Outlook and Recommendations
+
+    Be concise yet informative. Use bullet points where appropriate.
+    """
+    
+    combined_info = f"""
+    Company Info:
+    {json.dumps(company_info, indent=2)}
+
+    Jina Search Results:
+    {json.dumps(jina_results, indent=2)}
+
+    Exa Search Results:
+    {json.dumps([result.__dict__ for result in exa_results], indent=2)}
+    """
+
+    return process_with_openai(report_prompt, combined_info, openai_api_key)
+
+def get_download_link(content, filename, text):
+    b64 = base64.b64encode(content.encode()).decode()
+    return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
+
+def main_app():
+    st.title("Advanced Company Analyst with Jina and Exa Search")
+
+    api_keys = load_api_keys()
+    if not api_keys:
+        return
+
+    if 'jina_results' not in st.session_state:
+        st.session_state.jina_results = None
+    if 'exa_results' not in st.session_state:
+        st.session_state.exa_results = None
+    if 'company_info' not in st.session_state:
+        st.session_state.company_info = None
+    if 'final_report' not in st.session_state:
+        st.session_state.final_report = None
+
+    company_url = st.text_input("Enter the company's URL:")
+
+    if st.button("Analyze Company") and company_url:
+        with st.spinner("Analyzing..."):
+            # Jina Search
+            jina_results = get_jina_search_results(company_url, api_keys["jina"])
+            st.session_state.jina_results = jina_results
+
+            # Exa Search
+            exa_results = get_exa_search_results(company_url, api_keys["exa"])
+            st.session_state.exa_results = exa_results
+
+            # Process Jina and Exa results
+            combined_results = {
+                "jina": jina_results,
+                "exa": [result.__dict__ for result in exa_results] if exa_results else None
+            }
+            
+            company_info_prompt = "Extract key information about the company, including its name, description, products/services, and any other relevant details."
+            company_info = process_with_openrouter(company_info_prompt, combined_results, api_keys["openrouter"])
+            st.session_state.company_info = company_info
+
+            # Generate final report
+            final_report = generate_report(company_info, jina_results, exa_results, api_keys["openai"])
+            st.session_state.final_report = final_report
+
+            st.success("Analysis completed!")
+
+    if st.session_state.jina_results and st.session_state.exa_results:
+        st.subheader("Analysis Results")
+        
+        with st.expander("Jina Search Results"):
+            st.json(st.session_state.jina_results)
+        
+        with st.expander("Exa Search Results"):
+            for result in st.session_state.exa_results:
+                st.write(f"Title: {result.title}")
+                st.write(f"URL: {result.url}")
+                st.write(f"Highlights: {result.highlights}")
+                st.write("---")
+
+        if st.session_state.company_info:
+            st.subheader("Company Information")
+            st.write(st.session_state.company_info)
+
+        if st.session_state.final_report:
+            st.subheader("Final Report")
+            st.write(st.session_state.final_report)
+            
+            report_filename = "company_analysis_report.txt"
+            download_link = get_download_link(st.session_state.final_report, report_filename, "Download Report")
+            st.markdown(download_link, unsafe_allow_html=True)
+
 def login_page():
     st.title("Login")
     username = st.text_input("Username")
@@ -85,64 +222,6 @@ def login_page():
             st.rerun()
         else:
             st.error("Invalid username or password")
-
-def main_app():
-    st.title("Jina AI Search with OpenRouter Summary and Chat")
-
-    api_keys = load_api_keys()
-    if not api_keys:
-        return
-
-    if 'jina_results' not in st.session_state:
-        st.session_state.jina_results = None
-    if 'summary' not in st.session_state:
-        st.session_state.summary = None
-    if 'chat_history' not in st.session_state:
-        st.session_state.chat_history = []
-
-    query = st.text_input("Enter your search query:")
-
-    if st.button("Search") and query:
-        with st.spinner("Searching..."):
-            jina_results = get_jina_search_results(query, api_keys["jina"])
-            if jina_results:
-                st.session_state.jina_results = jina_results
-                st.success("Search completed. Generating summary...")
-                summary = process_with_openrouter("Provide a concise summary of these search results.", jina_results, api_keys["openrouter"])
-                if summary:
-                    st.session_state.summary = summary
-                    st.success("Summary generated.")
-                else:
-                    st.error("Failed to generate summary.")
-            else:
-                st.error("No results found or an error occurred.")
-
-    if st.session_state.jina_results:
-        st.subheader("Raw Jina AI Search Results")
-        st.text_area("Raw Results", json.dumps(st.session_state.jina_results, indent=2), height=300)
-
-        if st.session_state.summary:
-            st.subheader("Concise Summary")
-            st.write(st.session_state.summary)
-
-        st.subheader("Chat with the Data")
-        for message in st.session_state.chat_history:
-            st.write(f"{'You' if message['role'] == 'user' else 'AI'}: {message['content']}")
-
-        user_message = st.text_input("Enter your message:")
-        if st.button("Send"):
-            if user_message:
-                st.session_state.chat_history.append({"role": "user", "content": user_message})
-                response = process_with_openrouter(user_message, st.session_state.jina_results, api_keys["openrouter"])
-                if response:
-                    st.session_state.chat_history.append({"role": "assistant", "content": response})
-                    st.rerun()
-                else:
-                    st.error("Failed to get a response.")
-
-        if st.button("Clear Chat History"):
-            st.session_state.chat_history = []
-            st.success("Chat history cleared.")
 
 def display():
     if 'logged_in' not in st.session_state:
