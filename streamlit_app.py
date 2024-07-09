@@ -141,16 +141,32 @@ def analyze_market_position(context, openrouter_api_key):
     return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def analyze_linkedin_presence(context, openrouter_api_key):
-    prompt = "Summarize the company's LinkedIn presence, including follower count, post frequency, and main themes of their content. Highlight any notable engagement patterns or recent updates."
+    prompt = """Analyze the company's LinkedIn presence based on the provided data. Include:
+    1. Follower count and growth trends if available
+    2. Posting frequency and engagement rates
+    3. Main themes and topics of their content
+    4. Tone and style of their posts
+    5. Any notable recent updates or announcements
+    6. Overall effectiveness of their LinkedIn strategy"""
+    return process_with_openrouter(prompt, context, openrouter_api_key)
+
+def analyze_post_structure(context, openrouter_api_key):
+    prompt = """Analyze the structure and characteristics of the company's LinkedIn posts. Include:
+    1. Average length of posts
+    2. Use of hashtags, mentions, and emojis
+    3. Types of media used (text, images, videos, etc.)
+    4. Call-to-actions and engagement prompts
+    5. Frequency of sharing external links or company content
+    Provide recommendations for creating AI-generated posts that match their style."""
     return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def generate_executive_summary(analyses, openrouter_api_key):
-    context = {
-        "company_info": analyses["company_info"],
-        "market_position": analyses["market_position"],
-        "linkedin_presence": analyses["linkedin_presence"]
-    }
-    prompt = "Create a concise executive summary of the company based on the provided analyses. Include key points about the company, its market position, and its online presence."
+    context = analyses
+    prompt = """Create a concise executive summary of the company based on the provided analyses. Include:
+    1. Brief company overview
+    2. Key points about its market position and competitive advantages
+    3. Summary of their LinkedIn presence and content strategy
+    4. Main insights and recommendations"""
     return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def main_app():
@@ -189,7 +205,8 @@ def main_app():
             analyses = {
                 "company_info": analyze_company_info(context, api_keys["openrouter"]),
                 "market_position": analyze_market_position(context, api_keys["openrouter"]),
-                "linkedin_presence": analyze_linkedin_presence(context, api_keys["openrouter"])
+                "linkedin_presence": analyze_linkedin_presence(context, api_keys["openrouter"]),
+                "post_structure": analyze_post_structure(context, api_keys["openrouter"])
             }
 
             # Generate executive summary
@@ -202,32 +219,57 @@ def main_app():
             st.success("Analysis completed!")
 
     if 'analyses' in st.session_state and 'executive_summary' in st.session_state:
-        st.subheader("Executive Summary")
-        st.write(st.session_state.executive_summary)
+        # Compile all information into a single report
+        full_report = f"""# Company Analysis Report
 
-        st.subheader("Detailed Analyses")
-        for key, value in st.session_state.analyses.items():
-            with st.expander(key.replace("_", " ").title()):
-                st.write(value)
+## Executive Summary
 
+{st.session_state.executive_summary}
+
+## Detailed Analyses
+
+### Company Information
+
+{st.session_state.analyses['company_info']}
+
+### Market Position
+
+{st.session_state.analyses['market_position']}
+
+### LinkedIn Presence
+
+{st.session_state.analyses['linkedin_presence']}
+
+### Post Structure Analysis
+
+{st.session_state.analyses['post_structure']}
+"""
+
+        st.markdown(full_report)
+
+        # Provide download link for the full report
+        st.download_button(
+            label="Download Full Report",
+            data=full_report,
+            file_name="company_analysis_report.md",
+            mime="text/markdown"
+        )
+
+        # Display raw data in expanders
         if st.session_state.jina_results:
-            with st.expander("Jina Search Results"):
+            with st.expander("Raw Jina Search Results"):
                 st.json(st.session_state.jina_results)
         
         if st.session_state.exa_results:
-            with st.expander("Exa Search Results"):
-                for result in st.session_state.exa_results:
-                    st.write(f"Title: {result.title}")
-                    st.write(f"URL: {result.url}")
-                    st.write(f"Highlights: {result.highlights}")
-                    st.write("---")
+            with st.expander("Raw Exa Search Results"):
+                st.json([result.__dict__ for result in st.session_state.exa_results])
 
         if st.session_state.linkedin_data:
-            with st.expander("LinkedIn Company Data"):
+            with st.expander("Raw LinkedIn Company Data"):
                 st.json(st.session_state.linkedin_data)
 
         if st.session_state.linkedin_posts:
-            with st.expander("LinkedIn Company Posts"):
+            with st.expander("Raw LinkedIn Company Posts"):
                 st.json(st.session_state.linkedin_posts)
 
 def login_page():
