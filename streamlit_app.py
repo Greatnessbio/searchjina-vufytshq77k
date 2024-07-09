@@ -106,7 +106,7 @@ def get_linkedin_company_posts(company_url, rapidapi_key):
         response.raise_for_status()
         return response.json()
     except requests.RequestException as e:
-        st.error(f"LinkedIn company posts request failed: {e}")
+        LOGGER.error(f"LinkedIn company posts request failed: {e}")
     return None
 
 def process_with_openrouter(prompt, context, openrouter_api_key):
@@ -132,45 +132,35 @@ def process_with_openrouter(prompt, context, openrouter_api_key):
         LOGGER.error(f"OpenRouter API request failed: {e}")
     return None
 
-def analyze_company_info(context, openrouter_api_key):
-    prompt = "Provide a concise overview of the company, including its name, industry, main products/services, and any key information about its size, location, or founding."
-    return process_with_openrouter(prompt, context, openrouter_api_key)
+def generate_report(company_info, jina_results, exa_results, linkedin_data, linkedin_posts, openrouter_api_key):
+    report_prompt = """
+    Create a comprehensive report on the company based on the provided information. 
+    The report should include the following sections:
+    1. Executive Summary
+    2. Company Overview
+    3. Products and Services
+    4. Market Analysis
+    5. Competitive Landscape
+    6. LinkedIn Presence and Activity
+    7. SWOT Analysis
+    8. Future Outlook and Recommendations
 
-def analyze_market_position(context, openrouter_api_key):
-    prompt = "Analyze the company's market position, including its main competitors, target market, and any unique selling propositions or competitive advantages."
-    return process_with_openrouter(prompt, context, openrouter_api_key)
+    Be concise yet informative. Use bullet points where appropriate.
+    """
+    
+    context = {
+        "company_info": company_info,
+        "jina_results": jina_results,
+        "exa_results": [result.__dict__ for result in exa_results] if exa_results else "Not available",
+        "linkedin_data": linkedin_data,
+        "linkedin_posts": linkedin_posts
+    }
 
-def analyze_linkedin_presence(context, openrouter_api_key):
-    prompt = """Analyze the company's LinkedIn presence based on the provided data. Include:
-    1. Follower count and growth trends if available
-    2. Posting frequency and engagement rates
-    3. Main themes and topics of their content
-    4. Tone and style of their posts
-    5. Any notable recent updates or announcements
-    6. Overall effectiveness of their LinkedIn strategy
-    Use both the LinkedIn company data and the LinkedIn posts data for this analysis."""
-    return process_with_openrouter(prompt, context, openrouter_api_key)
+    return process_with_openrouter(report_prompt, context, openrouter_api_key)
 
-def analyze_post_structure(context, openrouter_api_key):
-    prompt = """Analyze the structure and characteristics of the company's LinkedIn posts. Include:
-    1. Average length of posts
-    2. Use of hashtags, mentions, and emojis
-    3. Types of media used (text, images, videos, etc.)
-    4. Call-to-actions and engagement prompts
-    5. Frequency of sharing external links or company content
-    6. Engagement levels (likes, comments, shares) on different types of posts
-    Provide recommendations for creating AI-generated posts that match their style.
-    Base your analysis on the LinkedIn posts data provided in the context."""
-    return process_with_openrouter(prompt, context, openrouter_api_key)
-
-def generate_executive_summary(analyses, openrouter_api_key):
-    context = analyses
-    prompt = """Create a concise executive summary of the company based on the provided analyses. Include:
-    1. Brief company overview
-    2. Key points about its market position and competitive advantages
-    3. Summary of their LinkedIn presence and content strategy
-    4. Main insights and recommendations"""
-    return process_with_openrouter(prompt, context, openrouter_api_key)
+def get_download_link(content, filename, text):
+    b64 = base64.b64encode(content.encode()).decode()
+    return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
 
 def main_app():
     st.title("Advanced Company Analyst with Jina, Exa, and LinkedIn Data")
@@ -260,6 +250,7 @@ def main_app():
             report_filename = "company_analysis_report.txt"
             download_link = get_download_link(st.session_state.final_report, report_filename, "Download Report")
             st.markdown(download_link, unsafe_allow_html=True)
+
 def login_page():
     st.title("Login")
     username = st.text_input("Username")
