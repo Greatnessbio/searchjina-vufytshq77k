@@ -4,6 +4,7 @@ import json
 import time
 import os
 import base64
+from urllib.parse import urlparse
 
 try:
     from exa_py import Exa
@@ -11,6 +12,9 @@ try:
 except ImportError:
     exa_available = False
     st.warning("Exa package is not installed. Exa search functionality will be disabled.")
+
+# Timeout for API calls (in seconds)
+API_TIMEOUT = 30
 
 def load_api_keys():
     try:
@@ -45,7 +49,7 @@ def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
     }
     for attempt in range(max_retries):
         try:
-            response = requests.get(url, headers=headers)
+            response = requests.get(url, headers=headers, timeout=API_TIMEOUT)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
@@ -72,63 +76,117 @@ def get_exa_search_results(url, exa_api_key):
         st.error(f"Exa search request failed: {e}")
         return None
 
-def process_with_openrouter(prompt, search_results, openrouter_api_key):
+def get_linkedin_url(company_name, rapidapi_key):
+    url = "https://linkedin-company-data.p.rapidapi.com/search"
+    querystring = {"keyword": company_name}
+    headers = {
+        "X-RapidAPI-Key": rapidapi_key,
+        "X-RapidAPI-Host": "linkedin-company-data.p.rapidapi.com"
+    }
+    try:
+        response = requests.get(url, headers=headers, params=querystring, timeout=API_TIMEOUT)
+        response.raise_for_status()
+        data = response.json()
+        if data and len(data) > 0:
+            return data[0].get('linkedinUrl')
+    except requests.RequestException as e:
+        st.error(f"LinkedIn URL search failed: {e}")
+    return None
+
+def process_with_openrouter(prompt, context, openrouter_api_key):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {openrouter_api_key}",
         "Content-Type": "application/json"
     }
     
-    full_prompt = f"""Search results:
-{json.dumps(search_results, indent=2)}
+    full_prompt = f"""Context:
+{json.dumps(context, indent=2)}
 
 Task: {prompt}
 
-Provide a response based on the search results and the given task."""
+Provide a response based on the given context and task."""
 
     payload = {
         "model": "anthropic/claude-3-sonnet-20240229",
         "messages": [
-            {"role": "system", "content": "You are an AI assistant tasked with processing and analyzing information from search results."},
+            {"role": "system", "content": "You are an AI assistant tasked with analyzing company information and providing insights."},
             {"role": "user", "content": full_prompt}
         ]
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload)
+        response = requests.post(url, headers=headers, json=payload, timeout=API_TIMEOUT)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
     except requests.RequestException as e:
         st.error(f"OpenRouter API request failed: {e}")
     return None
 
-def generate_report(company_info, jina_results, exa_results, openrouter_api_key):
+def generate_company_info(jina_results, exa_results, linkedin_url, openrouter_api_key):
+    company_info_prompt = """
+    Extract and summarize key information about the company, including:
+    1. Company name
+    2. Description
+    3. Products/services
+    4. Industry
+    5. Company size (if available)
+    6. Founded year (if available)
+    7. Headquarters location
+    8. Key executives (if available)
+    
+    Provide this information in a structured format.
+    """
+    
+    context = {
+        "jina_results": jina_results,
+        "exa_results": [result.__dict__ for result in exa_results] if exa_results else None,
+        "linkedin_url": linkedin_url
+    }
+    
+    return process_with_openrouter(company_info_prompt, context, openrouter_api_key)
+
+def generate_competitor_analysis(jina_results, exa_results, openrouter_api_key):
+    competitor_analysis_prompt = """
+    Based on the search results, identify and analyze the main competitors of the company. For each competitor, provide:
+    1. Competitor name
+    2. Brief description
+    3. Key products/services
+    4. Strengths and weaknesses compared to the main company
+    
+    Summarize the competitive landscape and the company's position within it.
+    """
+    
+    context = {
+        "jina_results": jina_results,
+        "exa_results": [result.__dict__ for result in exa_results] if exa_results else None
+    }
+    
+    return process_with_openrouter(competitor_analysis_prompt, context, openrouter_api_key)
+
+def generate_final_report(company_info, competitor_analysis, jina_results, exa_results, openrouter_api_key):
     report_prompt = """
     Create a comprehensive report on the company based on the provided information. 
     The report should include the following sections:
     1. Executive Summary
-    2. Company Overview
+    2. Company Overview (use the company_info)
     3. Products and Services
     4. Market Analysis
-    5. Competitive Landscape
+    5. Competitive Landscape (use the competitor_analysis)
     6. SWOT Analysis
     7. Future Outlook and Recommendations
 
     Be concise yet informative. Use bullet points where appropriate.
     """
     
-    combined_info = f"""
-    Company Info:
-    {json.dumps(company_info, indent=2)}
+    context = {
+        "company_info": company_info,
+        "competitor_analysis": competitor_analysis,
+        "jina_results": jina_results,
+        "exa_results": [result.__dict__ for result in exa_results] if exa_results else None
+    }
 
-    Jina Search Results:
-    {json.dumps(jina_results, indent=2)}
-
-    Exa Search Results:
-    {json.dumps([result.__dict__ for result in exa_results], indent=2) if exa_results else "Not available"}
-    """
-
-    return process_with_openrouter(report_prompt, combined_info, openrouter_api_key)
+    return process_with_openrouter(report_prompt, context, openrouter_api_key)
 
 def get_download_link(content, filename, text):
     b64 = base64.b64encode(content.encode()).decode()
@@ -147,6 +205,8 @@ def main_app():
         st.session_state.exa_results = None
     if 'company_info' not in st.session_state:
         st.session_state.company_info = None
+    if 'competitor_analysis' not in st.session_state:
+        st.session_state.competitor_analysis = None
     if 'final_report' not in st.session_state:
         st.session_state.final_report = None
 
@@ -154,6 +214,12 @@ def main_app():
 
     if st.button("Analyze Company") and company_url:
         with st.spinner("Analyzing..."):
+            # Extract company name from URL
+            company_name = urlparse(company_url).netloc.split('.')[1] if urlparse(company_url).netloc.startswith('www.') else urlparse(company_url).netloc.split('.')[0]
+            
+            # Get LinkedIn URL
+            linkedin_url = get_linkedin_url(company_name, api_keys["rapidapi"])
+            
             # Jina Search
             jina_results = get_jina_search_results(company_url, api_keys["jina"])
             st.session_state.jina_results = jina_results
@@ -166,18 +232,16 @@ def main_app():
                 st.session_state.exa_results = None
                 st.warning("Exa search is not available. Analysis will be based only on Jina results.")
 
-            # Process Jina and Exa results
-            combined_results = {
-                "jina": jina_results,
-                "exa": [result.__dict__ for result in st.session_state.exa_results] if st.session_state.exa_results else None
-            }
-            
-            company_info_prompt = "Extract key information about the company, including its name, description, products/services, and any other relevant details."
-            company_info = process_with_openrouter(company_info_prompt, combined_results, api_keys["openrouter"])
+            # Generate company info
+            company_info = generate_company_info(jina_results, st.session_state.exa_results, linkedin_url, api_keys["openrouter"])
             st.session_state.company_info = company_info
 
+            # Generate competitor analysis
+            competitor_analysis = generate_competitor_analysis(jina_results, st.session_state.exa_results, api_keys["openrouter"])
+            st.session_state.competitor_analysis = competitor_analysis
+
             # Generate final report
-            final_report = generate_report(company_info, jina_results, st.session_state.exa_results, api_keys["openrouter"])
+            final_report = generate_final_report(company_info, competitor_analysis, jina_results, st.session_state.exa_results, api_keys["openrouter"])
             st.session_state.final_report = final_report
 
             st.success("Analysis completed!")
@@ -200,6 +264,10 @@ def main_app():
         if st.session_state.company_info:
             st.subheader("Company Information")
             st.write(st.session_state.company_info)
+
+        if st.session_state.competitor_analysis:
+            st.subheader("Competitor Analysis")
+            st.write(st.session_state.competitor_analysis)
 
         if st.session_state.final_report:
             st.subheader("Final Report")
