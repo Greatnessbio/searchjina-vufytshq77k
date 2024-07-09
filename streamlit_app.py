@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import time
+import base64
 from streamlit.logger import get_logger
 
 try:
@@ -132,38 +133,62 @@ def process_with_openrouter(prompt, context, openrouter_api_key):
         LOGGER.error(f"OpenRouter API request failed: {e}")
     return None
 
-def generate_report(company_info, jina_results, exa_results, linkedin_data, linkedin_posts, openrouter_api_key):
-    report_prompt = """
-    Create a comprehensive report on the company based on the provided information. 
-    The report should include the following sections:
-    1. Executive Summary
-    2. Company Overview
-    3. Products and Services
-    4. Market Analysis
-    5. Competitive Landscape
-    6. LinkedIn Presence and Activity
-    7. SWOT Analysis
-    8. Future Outlook and Recommendations
-
-    Be concise yet informative. Use bullet points where appropriate.
+def analyze_company_info(context, openrouter_api_key):
+    prompt = """
+    Analyze the provided information and create a detailed company profile including:
+    1. Company name and brief description
+    2. Industry and main products/services
+    3. Company size, location, and founding year
+    4. Key executives and their roles
+    5. Recent company developments or notable achievements
     """
-    
-    context = {
-        "company_info": company_info,
-        "jina_results": jina_results,
-        "exa_results": [result.__dict__ for result in exa_results] if exa_results else "Not available",
-        "linkedin_data": linkedin_data,
-        "linkedin_posts": linkedin_posts
-    }
+    return process_with_openrouter(prompt, context, openrouter_api_key)
 
-    return process_with_openrouter(report_prompt, context, openrouter_api_key)
+def analyze_competitors(context, openrouter_api_key):
+    prompt = """
+    Based on the provided information, analyze the company's competitive landscape:
+    1. Identify main competitors and provide a brief description of each
+    2. Compare the company's products/services with those of competitors
+    3. Analyze the company's unique selling propositions (USPs) and competitive advantages
+    4. Identify potential market threats or challenges from competitors
+    """
+    return process_with_openrouter(prompt, context, openrouter_api_key)
+
+def analyze_linkedin_presence(context, openrouter_api_key):
+    prompt = """
+    Analyze the company's LinkedIn presence based on their profile data and recent posts:
+    1. Follower count and growth trends (if available)
+    2. Posting frequency and engagement rates
+    3. Main themes and topics of their content
+    4. Tone and style of their posts
+    5. Use of hashtags, mentions, and media in posts
+    6. Notable recent updates or announcements
+    7. Overall effectiveness of their LinkedIn strategy
+    """
+    return process_with_openrouter(prompt, context, openrouter_api_key)
+
+def generate_executive_summary(analyses, openrouter_api_key):
+    context = analyses
+    prompt = """
+    Create a concise executive summary of the company based on the provided analyses. Include:
+    1. Brief company overview and key statistics
+    2. Main products/services and target market
+    3. Key competitive advantages and market position
+    4. Summary of main competitors and competitive landscape
+    5. Overview of LinkedIn presence and social media strategy
+    6. Key strengths, weaknesses, opportunities, and threats (SWOT)
+    7. Main insights and recommendations for future growth
+    
+    The summary should be concise yet comprehensive, highlighting the most important findings from the analysis.
+    """
+    return process_with_openrouter(prompt, context, openrouter_api_key)
 
 def get_download_link(content, filename, text):
     b64 = base64.b64encode(content.encode()).decode()
     return f'<a href="data:file/txt;base64,{b64}" download="{filename}">{text}</a>'
 
 def main_app():
-    st.title("Advanced Company Analyst with Jina, Exa, and LinkedIn Data")
+    st.title("Comprehensive Company Analyst")
 
     api_keys = load_api_keys()
     if not api_keys:
@@ -173,83 +198,93 @@ def main_app():
     linkedin_url = st.text_input("Enter the company's LinkedIn URL:")
 
     if st.button("Analyze Company") and company_url and linkedin_url:
-        with st.spinner("Analyzing..."):
-            # Jina Search
+        with st.spinner("Analyzing... This may take a few minutes."):
+            # Fetch data
             jina_results = get_jina_search_results(company_url, api_keys["jina"])
-            st.session_state.jina_results = jina_results
-
-            # Exa Search
-            if exa_available and api_keys["exa"]:
-                exa_results = get_exa_search_results(company_url, api_keys["exa"])
-                st.session_state.exa_results = exa_results
-            else:
-                st.session_state.exa_results = None
-                st.warning("Exa search is not available. Analysis will be based only on Jina results.")
-
-            # LinkedIn Data
+            exa_results = get_exa_search_results(company_url, api_keys["exa"]) if exa_available else None
             linkedin_data = get_linkedin_company_data(linkedin_url, api_keys["rapidapi"])
-            st.session_state.linkedin_data = linkedin_data
-
-            # LinkedIn Posts
             linkedin_posts = get_linkedin_company_posts(linkedin_url, api_keys["rapidapi"])
+
+            # Store raw data in session state
+            st.session_state.jina_results = jina_results
+            st.session_state.exa_results = exa_results
+            st.session_state.linkedin_data = linkedin_data
             st.session_state.linkedin_posts = linkedin_posts
 
-            # Process all results
-            combined_results = {
-                "jina": jina_results,
-                "exa": [result.__dict__ for result in st.session_state.exa_results] if st.session_state.exa_results else None,
+            # Prepare context for analysis
+            context = {
+                "jina_results": jina_results,
+                "exa_results": [result.__dict__ for result in exa_results] if exa_results else None,
                 "linkedin_data": linkedin_data,
                 "linkedin_posts": linkedin_posts
             }
-            
-            company_info_prompt = "Extract key information about the company, including its name, description, products/services, and any other relevant details."
-            company_info = process_with_openrouter(company_info_prompt, combined_results, api_keys["openrouter"])
-            st.session_state.company_info = company_info
 
-            linkedin_analysis_prompt = "Analyze the company's LinkedIn presence based on their profile data and recent posts. Include insights on posting frequency, engagement, and content themes."
-            linkedin_analysis = process_with_openrouter(linkedin_analysis_prompt, combined_results, api_keys["openrouter"])
+            # Perform analyses
+            company_info = analyze_company_info(context, api_keys["openrouter"])
+            competitor_analysis = analyze_competitors(context, api_keys["openrouter"])
+            linkedin_analysis = analyze_linkedin_presence(context, api_keys["openrouter"])
+
+            # Store analyses in session state
+            st.session_state.company_info = company_info
+            st.session_state.competitor_analysis = competitor_analysis
             st.session_state.linkedin_analysis = linkedin_analysis
 
-            # Generate final report
-            final_report = generate_report(company_info, jina_results, st.session_state.exa_results, linkedin_data, linkedin_posts, api_keys["openrouter"])
-            st.session_state.final_report = final_report
+            # Generate executive summary
+            analyses = {
+                "company_info": company_info,
+                "competitor_analysis": competitor_analysis,
+                "linkedin_analysis": linkedin_analysis
+            }
+            executive_summary = generate_executive_summary(analyses, api_keys["openrouter"])
+            st.session_state.executive_summary = executive_summary
+
+            # Compile full report
+            full_report = f"""# Comprehensive Company Analysis
+
+## Executive Summary
+
+{executive_summary}
+
+## Detailed Company Information
+
+{company_info}
+
+## Competitor Analysis
+
+{competitor_analysis}
+
+## LinkedIn Presence Analysis
+
+{linkedin_analysis}
+"""
+            st.session_state.full_report = full_report
 
             st.success("Analysis completed!")
 
-    if st.session_state.get('jina_results') or st.session_state.get('exa_results') or st.session_state.get('linkedin_data'):
-        st.subheader("Analysis Results")
-        
+    if 'full_report' in st.session_state:
+        st.markdown(st.session_state.full_report)
+
+        # Provide download link for the full report
+        report_filename = "comprehensive_company_analysis.md"
+        download_link = get_download_link(st.session_state.full_report, report_filename, "Download Full Report")
+        st.markdown(download_link, unsafe_allow_html=True)
+
+        # Display raw data in expanders
         if st.session_state.get('jina_results'):
-            with st.expander("Jina Search Results"):
+            with st.expander("Raw Jina Search Results"):
                 st.json(st.session_state.jina_results)
         
         if st.session_state.get('exa_results'):
-            with st.expander("Exa Search Results"):
+            with st.expander("Raw Exa Search Results"):
                 st.json([result.__dict__ for result in st.session_state.exa_results])
 
         if st.session_state.get('linkedin_data'):
-            with st.expander("LinkedIn Company Data"):
+            with st.expander("Raw LinkedIn Company Data"):
                 st.json(st.session_state.linkedin_data)
 
         if st.session_state.get('linkedin_posts'):
-            with st.expander("LinkedIn Company Posts"):
+            with st.expander("Raw LinkedIn Company Posts"):
                 st.json(st.session_state.linkedin_posts)
-
-        if st.session_state.get('company_info'):
-            st.subheader("Company Information")
-            st.write(st.session_state.company_info)
-
-        if st.session_state.get('linkedin_analysis'):
-            st.subheader("LinkedIn Presence Analysis")
-            st.write(st.session_state.linkedin_analysis)
-
-        if st.session_state.get('final_report'):
-            st.subheader("Final Report")
-            st.write(st.session_state.final_report)
-            
-            report_filename = "company_analysis_report.txt"
-            download_link = get_download_link(st.session_state.final_report, report_filename, "Download Report")
-            st.markdown(download_link, unsafe_allow_html=True)
 
 def login_page():
     st.title("Login")
