@@ -15,10 +15,10 @@ except ImportError:
 def load_api_keys():
     try:
         return {
-            "jina": st.secrets["jina_api_key"],
-            "openrouter": st.secrets["openrouter_api_key"],
-            "exa": st.secrets["exa_api_key"] if exa_available else None,
-            "rapidapi": st.secrets["rapidapi_key"]
+            "jina": st.secrets["secrets"]["jina_api_key"],
+            "openrouter": st.secrets["secrets"]["openrouter_api_key"],
+            "exa": st.secrets["secrets"]["exa_api_key"] if exa_available else None,
+            "rapidapi": st.secrets["secrets"]["rapidapi_key"]
         }
     except KeyError as e:
         st.error(f"{str(e)} API key not found in secrets.toml. Please add it.")
