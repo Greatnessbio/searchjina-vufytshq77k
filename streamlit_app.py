@@ -44,29 +44,24 @@ def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
                 st.error(f"Jina AI search request failed after {max_retries} attempts: {e}")
     return None
 
-def process_with_openrouter(prompt, context, jina_results, openrouter_api_key):
+def process_with_openrouter(prompt, jina_results, openrouter_api_key):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {openrouter_api_key}",
         "Content-Type": "application/json"
     }
     
-    full_prompt = f"""Context from previous interactions:
-{context}
-
-Jina AI search results:
+    full_prompt = f"""Jina AI search results:
 {json.dumps(jina_results, indent=2)}
 
-Current task:
-{prompt}
+Task: {prompt}
 
-Provide a response based on the context, Jina AI search results, and the current task. 
-Your response should be a concise but detailed summary of the relevant information."""
+Provide a response based on the Jina AI search results and the given task."""
 
     payload = {
         "model": "anthropic/claude-3-sonnet-20240229",
         "messages": [
-            {"role": "system", "content": "You are an AI assistant tasked with processing and analyzing information from Jina AI search results and previous interactions."},
+            {"role": "system", "content": "You are an AI assistant tasked with processing and analyzing information from Jina AI search results."},
             {"role": "user", "content": full_prompt}
         ]
     }
@@ -92,7 +87,7 @@ def login_page():
             st.error("Invalid username or password")
 
 def main_app():
-    st.title("Jina AI Search with OpenRouter Sequential Prompts")
+    st.title("Jina AI Search with OpenRouter Summary and Chat")
 
     api_keys = load_api_keys()
     if not api_keys:
@@ -100,10 +95,10 @@ def main_app():
 
     if 'jina_results' not in st.session_state:
         st.session_state.jina_results = None
-    if 'context' not in st.session_state:
-        st.session_state.context = ""
-    if 'summaries' not in st.session_state:
-        st.session_state.summaries = []
+    if 'summary' not in st.session_state:
+        st.session_state.summary = None
+    if 'chat_history' not in st.session_state:
+        st.session_state.chat_history = []
 
     query = st.text_input("Enter your search query:")
 
@@ -112,32 +107,42 @@ def main_app():
             jina_results = get_jina_search_results(query, api_keys["jina"])
             if jina_results:
                 st.session_state.jina_results = jina_results
-                st.success("Search completed. You can now process prompts.")
+                st.success("Search completed. Generating summary...")
+                summary = process_with_openrouter("Provide a concise summary of these search results.", jina_results, api_keys["openrouter"])
+                if summary:
+                    st.session_state.summary = summary
+                    st.success("Summary generated.")
+                else:
+                    st.error("Failed to generate summary.")
             else:
                 st.error("No results found or an error occurred.")
 
     if st.session_state.jina_results:
-        prompt = st.text_area("Enter your prompt for analysis:")
-        if st.button("Process Prompt"):
-            with st.spinner("Processing..."):
-                result = process_with_openrouter(prompt, st.session_state.context, st.session_state.jina_results, api_keys["openrouter"])
-                if result:
-                    st.session_state.summaries.append(result)
-                    st.session_state.context += f"\nPrompt: {prompt}\nResult: {result}\n"
+        st.subheader("Raw Jina AI Search Results")
+        st.text_area("Raw Results", json.dumps(st.session_state.jina_results, indent=2), height=300)
+
+        if st.session_state.summary:
+            st.subheader("Concise Summary")
+            st.write(st.session_state.summary)
+
+        st.subheader("Chat with the Data")
+        for message in st.session_state.chat_history:
+            st.write(f"{'You' if message['role'] == 'user' else 'AI'}: {message['content']}")
+
+        user_message = st.text_input("Enter your message:")
+        if st.button("Send"):
+            if user_message:
+                st.session_state.chat_history.append({"role": "user", "content": user_message})
+                response = process_with_openrouter(user_message, st.session_state.jina_results, api_keys["openrouter"])
+                if response:
+                    st.session_state.chat_history.append({"role": "assistant", "content": response})
+                    st.rerun()
                 else:
-                    st.error("Failed to process the prompt.")
+                    st.error("Failed to get a response.")
 
-        if st.button("Clear Context and Summaries"):
-            st.session_state.context = ""
-            st.session_state.summaries = []
-            st.success("Context and summaries cleared.")
-
-        st.subheader("Summaries")
-        for i, summary in enumerate(st.session_state.summaries):
-            st.text_area(f"Summary {i+1}", summary, height=150)
-
-        st.subheader("Current Context")
-        st.text_area("Context", st.session_state.context, height=300, disabled=True)
+        if st.button("Clear Chat History"):
+            st.session_state.chat_history = []
+            st.success("Chat history cleared.")
 
 def display():
     if 'logged_in' not in st.session_state:
