@@ -3,17 +3,22 @@ import requests
 import json
 import time
 import os
-from exa_py import Exa
-import openai
 import base64
+
+try:
+    from exa_py import Exa
+    exa_available = True
+except ImportError:
+    exa_available = False
+    st.warning("Exa package is not installed. Exa search functionality will be disabled.")
 
 def load_api_keys():
     try:
         return {
-            "jina": st.secrets["secrets"]["jina_api_key"],
-            "openrouter": st.secrets["secrets"]["openrouter_api_key"],
-            "exa": st.secrets["secrets"]["exa_api_key"],
-            "openai": st.secrets["secrets"]["openai_api_key"]
+            "jina": st.secrets["jina_api_key"],
+            "openrouter": st.secrets["openrouter_api_key"],
+            "exa": st.secrets["exa_api_key"] if exa_available else None,
+            "rapidapi": st.secrets["rapidapi_key"]
         }
     except KeyError as e:
         st.error(f"{e} API key not found in secrets.toml. Please add it.")
@@ -52,6 +57,9 @@ def get_jina_search_results(query, jina_api_key, max_retries=3, delay=5):
 
 @st.cache_data(ttl=3600)
 def get_exa_search_results(url, exa_api_key):
+    if not exa_available:
+        st.warning("Exa search is not available.")
+        return None
     exa = Exa(api_key=exa_api_key)
     try:
         search_response = exa.find_similar_and_contents(
@@ -94,22 +102,7 @@ Provide a response based on the search results and the given task."""
         st.error(f"OpenRouter API request failed: {e}")
     return None
 
-def process_with_openai(prompt, content, openai_api_key):
-    openai.api_key = openai_api_key
-    try:
-        completion = openai.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant analyzing company information."},
-                {"role": "user", "content": f"{prompt}\n\nContent:\n{content}"}
-            ]
-        )
-        return completion.choices[0].message.content
-    except Exception as e:
-        st.error(f"OpenAI API request failed: {e}")
-    return None
-
-def generate_report(company_info, jina_results, exa_results, openai_api_key):
+def generate_report(company_info, jina_results, exa_results):
     report_prompt = """
     Create a comprehensive report on the company based on the provided information. 
     The report should include the following sections:
@@ -119,8 +112,7 @@ def generate_report(company_info, jina_results, exa_results, openai_api_key):
     4. Market Analysis
     5. Competitive Landscape
     6. SWOT Analysis
-    7. Financial Overview (if available)
-    8. Future Outlook and Recommendations
+    7. Future Outlook and Recommendations
 
     Be concise yet informative. Use bullet points where appropriate.
     """
@@ -133,10 +125,10 @@ def generate_report(company_info, jina_results, exa_results, openai_api_key):
     {json.dumps(jina_results, indent=2)}
 
     Exa Search Results:
-    {json.dumps([result.__dict__ for result in exa_results], indent=2)}
+    {json.dumps([result.__dict__ for result in exa_results], indent=2) if exa_results else "Not available"}
     """
 
-    return process_with_openai(report_prompt, combined_info, openai_api_key)
+    return process_with_openrouter(report_prompt, combined_info, api_keys["openrouter"])
 
 def get_download_link(content, filename, text):
     b64 = base64.b64encode(content.encode()).decode()
@@ -167,13 +159,17 @@ def main_app():
             st.session_state.jina_results = jina_results
 
             # Exa Search
-            exa_results = get_exa_search_results(company_url, api_keys["exa"])
-            st.session_state.exa_results = exa_results
+            if exa_available and api_keys["exa"]:
+                exa_results = get_exa_search_results(company_url, api_keys["exa"])
+                st.session_state.exa_results = exa_results
+            else:
+                st.session_state.exa_results = None
+                st.warning("Exa search is not available. Analysis will be based only on Jina results.")
 
             # Process Jina and Exa results
             combined_results = {
                 "jina": jina_results,
-                "exa": [result.__dict__ for result in exa_results] if exa_results else None
+                "exa": [result.__dict__ for result in st.session_state.exa_results] if st.session_state.exa_results else None
             }
             
             company_info_prompt = "Extract key information about the company, including its name, description, products/services, and any other relevant details."
@@ -181,23 +177,25 @@ def main_app():
             st.session_state.company_info = company_info
 
             # Generate final report
-            final_report = generate_report(company_info, jina_results, exa_results, api_keys["openai"])
+            final_report = generate_report(company_info, jina_results, st.session_state.exa_results)
             st.session_state.final_report = final_report
 
             st.success("Analysis completed!")
 
-    if st.session_state.jina_results and st.session_state.exa_results:
+    if st.session_state.jina_results or st.session_state.exa_results:
         st.subheader("Analysis Results")
         
-        with st.expander("Jina Search Results"):
-            st.json(st.session_state.jina_results)
+        if st.session_state.jina_results:
+            with st.expander("Jina Search Results"):
+                st.json(st.session_state.jina_results)
         
-        with st.expander("Exa Search Results"):
-            for result in st.session_state.exa_results:
-                st.write(f"Title: {result.title}")
-                st.write(f"URL: {result.url}")
-                st.write(f"Highlights: {result.highlights}")
-                st.write("---")
+        if st.session_state.exa_results:
+            with st.expander("Exa Search Results"):
+                for result in st.session_state.exa_results:
+                    st.write(f"Title: {result.title}")
+                    st.write(f"URL: {result.url}")
+                    st.write(f"Highlights: {result.highlights}")
+                    st.write("---")
 
         if st.session_state.company_info:
             st.subheader("Company Information")
